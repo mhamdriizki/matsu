@@ -28,7 +28,7 @@ function Header() {
 
 /**
  * Dashboard page. Server-rendered on every request from the read-only SQLite DB.
- * `?range=24h|7d|30d|all` picks the chart/stat window (default 30d); the hero always shows the newest reading.
+ * `?range=24h|3d|7d|10d` picks the chart/stat window (default 10d, the retention limit); the hero always shows the newest reading.
  */
 export default async function Page({ searchParams }: { searchParams: Promise<{ range?: string }> }) {
   const range = parseRange((await searchParams).range);

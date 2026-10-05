@@ -28,7 +28,7 @@ Interactive diagram: `docs/kurs-watch-architecture.html`.
 Next.js 16 + React 19, Tailwind v4, shadcn/ui, Recharts. Needs Node >= 22 (better-sqlite3 13).
 
 - Hero rate with verdict, change since last reading, and a target meter (current vs period low/high vs target).
-- Rate history chart with the target band shaded; range switch via `?range=24h|7d|30d|all` (default 30d).
+- Rate history chart with the target band shaded; range switch via `?range=24h|3d|7d|10d` (default 10d).
 - Stats, monitor health (last OK, failed polls, last error), last 20 readings, light/dark mode.
 - **Edit target** button sets the min/max band. It is saved in the DB (`state` keys `target_min`/`target_max`) and the monitor reads it on every poll, so alerts follow the dashboard within one poll interval (up to `POLL_MINUTES`). Saving also resets the monitor's in-band state, so the next poll re-alerts if the rate is inside the new band.
 - Reads the DB read-only, except for saving the target. Shows an empty state until the monitor has stored a reading.
@@ -51,12 +51,13 @@ The band comes from the dashboard's saved target; `TARGET_MIN` / `TARGET_MAX` in
 - Optional `HEALTHCHECK_URL` is pinged after each good poll, so you also hear about a dead container.
 
 ## Data retention
-Nothing is deleted. A row is stored only when BCA's own "last updated" value changes, so at most
-about 24 rows a day (about 1.3 MB a year). No pruning is needed. If the dashboard's "all" range ever
-gets heavy, downsample it to daily points in `getRates`.
+The monitor keeps **10 days** of readings (`RETENTION_DAYS`, default 10). After each successful poll it
+deletes rows older than that, but always keeps the newest row so the dashboard still has a current
+reading. Deleted rows are gone for good. The dashboard's longest range is 10d; if you raise
+`RETENTION_DAYS`, also raise the ranges in `dashboard/lib/db.ts`.
 
 ## Tests
-`docker compose run --rm -v ./monitor:/app monitor python test_targets.py` checks that a dashboard-saved target overrides the env defaults and drives alerts.
+`docker compose run --rm -v ./monitor:/app monitor python test_targets.py` checks that a dashboard-saved target overrides the env defaults and drives alerts. `test_prune.py` (same command) checks the 10-day retention.
 
 Parser and alert logic were exercised offline against synthetic HTML. The live BCA page was fetched
 successfully from a local machine (JPY row parsed); run step 3 on your VPS to check it from there.

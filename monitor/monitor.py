@@ -28,6 +28,7 @@ TARGET_MAX = float(os.getenv("TARGET_MAX", "113"))
 TG_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 HEALTHCHECK_URL = os.getenv("HEALTHCHECK_URL", "")
+RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "10"))   # older rate rows are deleted
 FAIL_ALERT_AFTER = int(os.getenv("FAIL_ALERT_AFTER", "3"))
 USER_AGENT = os.getenv(
     "USER_AGENT",
@@ -163,6 +164,18 @@ def store_if_new(db, d):
     return True
 
 
+def prune_old(db):
+    """Delete rate rows older than RETENTION_DAYS (by fetched_at). The newest row per currency is always
+    kept, so the dashboard still has a current reading if BCA has not changed for a long time."""
+    cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=RETENTION_DAYS)).isoformat()
+    n = db.execute(
+        "DELETE FROM rates WHERE fetched_at < ? AND id NOT IN (SELECT MAX(id) FROM rates GROUP BY currency)",
+        (cutoff,),
+    ).rowcount
+    db.commit()
+    return n
+
+
 # ---------- alerts ----------
 
 def telegram(text):
@@ -254,6 +267,9 @@ def cycle(db):
     set_state(db, "consecutive_failures", 0)
     set_state(db, "last_ok", dt.datetime.now(dt.timezone.utc).isoformat())
     inserted = store_if_new(db, d)
+    pruned = prune_old(db)
+    if pruned:
+        log.info("pruned %d rows older than %d days", pruned, RETENTION_DAYS)
     log.info("%s e-Rate Jual=%s stamp=%s %s", CURRENCY, d["erate_jual"],
              d["source_updated_at"], "(new)" if inserted else "(unchanged)")
     evaluate_alerts(db, d)
