@@ -32,7 +32,7 @@ RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "10"))   # older rate rows are 
 FAIL_ALERT_AFTER = int(os.getenv("FAIL_ALERT_AFTER", "3"))
 USER_AGENT = os.getenv(
     "USER_AGENT",
-    "Mozilla/5.0 (compatible; kurs-watch/1.0; personal use, hourly)",
+    "Mozilla/5.0 (compatible; matsu/1.0; personal use, hourly)",
 )
 
 WIB = dt.timezone(dt.timedelta(hours=7))
@@ -258,12 +258,12 @@ def cycle(db):
         set_state(db, "last_error", f"{dt.datetime.now(dt.timezone.utc).isoformat()} {type(e).__name__}: {e}")
         log.error("cycle failed (%d in a row): %s", fails, e)
         if fails == FAIL_ALERT_AFTER:
-            telegram(f"kurs-watch is failing ({fails} polls in a row).\n{type(e).__name__}: {e}\n"
+            telegram(f"matsu is failing ({fails} polls in a row).\n{type(e).__name__}: {e}\n"
                      "No rate alerts until fixed.")
         return
 
     if fails >= FAIL_ALERT_AFTER:
-        telegram("kurs-watch recovered; polling normally again.")
+        telegram("matsu recovered; polling normally again.")
     set_state(db, "consecutive_failures", 0)
     set_state(db, "last_ok", dt.datetime.now(dt.timezone.utc).isoformat())
     inserted = store_if_new(db, d)
@@ -288,13 +288,13 @@ def main():
         print(parse_page(fetch_html()))
         return
     if "--test-telegram" in args:
-        print("sent" if telegram("kurs-watch test message") else "FAILED (check token/chat id)")
+        print("sent" if telegram("matsu test message") else "FAILED (check token/chat id)")
         return
     db = open_db()
     if "--once" in args:
         cycle(db)
         return
-    telegram(f"kurs-watch started. Watching {CURRENCY} e-Rate Jual, band {band_text(*get_targets(db))}, "
+    telegram(f"matsu started. Watching {CURRENCY} e-Rate Jual, band {band_text(*get_targets(db))}, "
              f"every {POLL_SECONDS // 60} min.")
     while True:
         cycle(db)

@@ -1,4 +1,4 @@
-# kurs-watch
+# matsu 待つ
 
 Watches BCA's **e-Rate Jual** for one currency (default JPY), keeps history in SQLite,
 alerts via Telegram, and shows a Next.js dashboard.
@@ -8,7 +8,7 @@ BCA page --> monitor (Python) --> SQLite /data/kurs.db <-- dashboard (Next.js 16
                   |--> Telegram alerts
                   '--> optional healthcheck ping
 ```
-Interactive diagram: `docs/kurs-watch-architecture.html`.
+Interactive diagram: `docs/matsu-architecture.html`.
 
 ## Setup (VPS)
 
