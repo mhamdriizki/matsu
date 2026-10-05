@@ -11,6 +11,7 @@ Usage:
 """
 import base64
 import datetime as dt
+import html
 import logging
 import os
 import re
@@ -278,14 +279,14 @@ def prune_old(db):
 # ---------- alerts ----------
 
 def telegram(text):
-    """Send `text` to the configured chat. Returns True on success; logs instead if unconfigured."""
+    """Send `text` (Telegram HTML: <b>, <i>, <code>; escape dynamic parts) to the configured chat. Returns True on success; logs instead if unconfigured."""
     if not (TG_TOKEN and TG_CHAT):
         log.warning("Telegram not configured; would send: %s", text)
         return False
     try:
         r = httpx.post(
             f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
-            json={"chat_id": TG_CHAT, "text": text, "disable_web_page_preview": True},
+            json={"chat_id": TG_CHAT, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True},
             timeout=15,
         )
         r.raise_for_status()
@@ -297,37 +298,69 @@ def telegram(text):
     return False
 
 
+def flag_emoji(code):
+    """Flag emoji for a currency code: the first two letters are the country (JPY -> JP, EUR -> EU)."""
+    return "".join(chr(0x1F1E6 + ord(c) - 65) for c in code[:2].upper())
+
+
+def num(v, ref):
+    """Format `v` with thousands separators: 2 decimals for small rates (JPY ~113), none for large (SGD ~14,000)."""
+    return f"{v:,.{2 if ref < 1000 else 0}f}"
+
+
+def trim(v):
+    """Thousands separators, up to 2 decimals, no trailing zeros: 110 -> "110", 13720 -> "13,720", 112.5 -> "112.5"."""
+    return f"{v:,.2f}".rstrip("0").rstrip(".")
+
+
 def band_text(lo_v, hi_v):
     """Human-readable target band, e.g. "0 to 113"."""
     lo = f"{lo_v:g}" if lo_v > 0 else "0"
     return f"{lo} to {hi_v:g}"
 
 
+def alert_text(w, d, kind, low=None):
+    """Telegram message for one alert. kind: "in" (entered band), "low" (new low inside), "out" (left band).
+    Green circle = inside your target, red = outside. `low` is the previous (or in-band) low for "low"/"out"."""
+    code, jual = w["currency"], d["erate_jual"]
+    icon, title = {"in": ("\U0001F7E2", "IN TARGET"), "low": ("\U0001F7E2", "NEW LOW"),
+                   "out": ("\U0001F534", "LEFT TARGET")}[kind]
+    lo = trim(w["target_min"]) if w["target_min"] > 0 else "0"
+    lines = [f"{icon} <b>{flag_emoji(code)} {code} \u00b7 {title}</b>",
+             "",
+             f"\U0001F4B0 <b>{num(jual, jual)}</b> Rp per 1 {code} (Jual)",
+             f"\U0001F3AF Target {lo} \u2013 {trim(w['target_max'])}",
+             f"\U0001F3F7 Beli {num(d['erate_beli'], jual)}"]
+    if kind == "low":
+        lines.append(f"\U0001F4C9 Previous low {num(low, jual)}")
+    if kind == "out":
+        lines.append(f"\U0001F4CA Low while in target {num(low, jual)}")
+    if d["source_updated_at"]:
+        lines.append(f"\U0001F552 BCA {html.escape(d['source_updated_at'])}")
+    lines += ["", "<i>Rates can move before you confirm. Check myBCA before buying.</i>"]
+    return "\n".join(lines)
+
+
 def evaluate_alerts(db, w, d):
     """For watch row `w`: alert on entering the band, setting a new low inside it, or leaving it; silent
     otherwise. Alert state (in_band, band_low) is stored per currency in `watches`."""
     code, jual = w["currency"], d["erate_jual"]
-    band = band_text(w["target_min"], w["target_max"])
     in_band = w["target_min"] <= jual <= w["target_max"]
     was_in = bool(w["in_band"])
     band_low = w["band_low"] if w["band_low"] is not None else float("inf")
-    stamp = d["source_updated_at"] or "unknown time"
-    detail = (f"{code} e-Rate Jual: {jual:,.2f} (Beli {d['erate_beli']:,.2f})\n"
-              f"BCA stamp: {stamp}\n"
-              "Rates can move before you confirm; check myBCA before buying.")
 
     def save(flag, low):
         db.execute("UPDATE watches SET in_band=?, band_low=? WHERE currency=?", (flag, low, code))
         db.commit()
 
     if in_band and not was_in:
-        telegram(f"{code} IN TARGET BAND ({band})\n{detail}")
+        telegram(alert_text(w, d, "in"))
         save(1, jual)
     elif in_band and was_in and jual < band_low:
-        telegram(f"{code} NEW LOW inside band ({band})\n{detail}\nPrevious low: {band_low:,.2f}")
+        telegram(alert_text(w, d, "low", band_low))
         save(1, jual)
     elif not in_band and was_in:
-        telegram(f"{code} left target band ({band})\n{detail}\nLow while in band: {band_low:,.2f}")
+        telegram(alert_text(w, d, "out", band_low))
         save(0, None)
 
 
@@ -358,12 +391,12 @@ def cycle(db):
         set_state(db, "last_error", f"{dt.datetime.now(dt.timezone.utc).isoformat()} {type(e).__name__}: {e}")
         log.error("cycle failed (%d in a row): %s", fails, e)
         if fails == FAIL_ALERT_AFTER:
-            telegram(f"matsu is failing ({fails} polls in a row).\n{type(e).__name__}: {e}\n"
-                     "No rate alerts until fixed.")
+            telegram(f"\U0001F6A8 <b>matsu is failing</b> ({fails} polls in a row)\n"
+                     f"<code>{html.escape(f'{type(e).__name__}: {e}')}</code>\nNo rate alerts until fixed.")
         return
 
     if fails >= FAIL_ALERT_AFTER:
-        telegram("matsu recovered; polling normally again.")
+        telegram("\u2705 <b>matsu recovered</b>; polling normally again.")
     set_state(db, "consecutive_failures", 0)
     set_state(db, "last_ok", dt.datetime.now(dt.timezone.utc).isoformat())
     upsert_currencies(db, rows)
@@ -402,7 +435,7 @@ def main():
                 print(code, d)
         return
     if "--test-telegram" in args:
-        print("sent" if telegram("matsu test message") else "FAILED (check token/chat id)")
+        print("sent" if telegram("\U0001F514 matsu test message") else "FAILED (check token/chat id)")
         return
     db = open_db()
     seeded = seed_watches(db, parse_watchlist(WATCHLIST))
@@ -411,8 +444,9 @@ def main():
     if "--once" in args:
         cycle(db)
         return
-    bands = ", ".join(f"{w['currency']} {band_text(w['target_min'], w['target_max'])}" for w in get_watches(db))
-    telegram(f"matsu started. Watching e-Rate Jual: {bands or 'nothing yet'}; every {POLL_SECONDS // 60} min.")
+    bands = "\n".join(f"{flag_emoji(w['currency'])} {w['currency']}  {band_text(w['target_min'], w['target_max'])}"
+                      for w in get_watches(db))
+    telegram(f"\U0001F440 <b>matsu started</b>, checking every {POLL_SECONDS // 60} min\n{bands or 'Nothing watched yet.'}")
     while True:
         cycle(db)
         time.sleep(POLL_SECONDS)

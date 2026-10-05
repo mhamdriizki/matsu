@@ -20,7 +20,7 @@ def d(jual):
 
 
 m.evaluate_alerts(db, watch("JPY"), d(112.0))
-assert len(sent) == 1 and sent[0].startswith("JPY IN TARGET BAND (110 to 113)")
+assert len(sent) == 1 and sent[0].startswith("\U0001F7E2 <b>\U0001F1EF\U0001F1F5 JPY \u00b7 IN TARGET</b>") and "Target 110 \u2013 113" in sent[0]
 assert watch("JPY")["in_band"] == 1 and watch("SGD")["in_band"] == 0       # SGD untouched
 
 m.evaluate_alerts(db, watch("JPY"), d(112.0))
@@ -29,14 +29,14 @@ assert len(sent) == 1                                                       # si
 m.evaluate_alerts(db, watch("SGD"), d(14087.51))                            # above SGD band: no alert
 assert len(sent) == 1
 m.evaluate_alerts(db, watch("SGD"), d(13800.0))
-assert len(sent) == 2 and sent[1].startswith("SGD IN TARGET BAND (13720 to 13900)")
+assert len(sent) == 2 and sent[1].startswith("\U0001F7E2 <b>\U0001F1F8\U0001F1EC SGD \u00b7 IN TARGET</b>") and "Target 13,720 \u2013 13,900" in sent[1]
 m.evaluate_alerts(db, watch("SGD"), d(13750.0))
-assert "NEW LOW" in sent[2] and watch("SGD")["band_low"] == 13750.0
+assert "NEW LOW" in sent[2] and "Previous low 13,800" in sent[2] and watch("SGD")["band_low"] == 13750.0
 m.evaluate_alerts(db, watch("JPY"), d(114.0))
-assert "left target band" in sent[3] and watch("JPY")["band_low"] is None   # JPY left; SGD still in
+assert sent[3].startswith("\U0001F534") and "LEFT TARGET" in sent[3] and watch("JPY")["band_low"] is None   # JPY left; SGD still in
 assert watch("SGD")["in_band"] == 1
 
 db.execute("UPDATE watches SET target_max=111, in_band=0, band_low=NULL WHERE currency='JPY'")  # dashboard edit
 m.evaluate_alerts(db, watch("JPY"), d(110.5))
-assert len(sent) == 5 and "(110 to 111)" in sent[4]                         # re-alerts against new band
+assert len(sent) == 5 and "Target 110 \u2013 111" in sent[4]                         # re-alerts against new band
 print("ok")

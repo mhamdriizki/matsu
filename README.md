@@ -67,7 +67,9 @@ To see the charts before real history exists:
 **Delete `data/kurs.db` afterwards** so real monitoring starts clean.
 
 ## Alert rules
-Evaluated per currency, with its own state; every message starts with the currency code.
+Evaluated per currency, with its own state. Telegram messages use HTML formatting: a green circle title
+(`🟢 🇯🇵 JPY · IN TARGET`) while the rate is inside your band, red (`🔴 ... LEFT TARGET`) when it leaves, the
+country flag emoji from the currency code (JPY -> 🇯🇵, SGD -> 🇸🇬), the rate, your band, Beli and the BCA stamp.
 - Alert once when the rate enters the band, again on each new low while inside, and once when it leaves.
   No repeated pings while it sits still.
 - 3 failed polls in a row triggers a "scraper failing" message; recovery triggers another. A watched currency
