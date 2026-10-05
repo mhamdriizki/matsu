@@ -38,4 +38,4 @@ jobs:
           VPS_HOST: ${{ secrets.VPS_HOST }}
         run: |
           ssh -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-            "$VPS_USER@$VPS_HOST" deploy
+            "$VPS_USER@$VPS_HOST" /usr/local/bin/matsu-deploy.sh
