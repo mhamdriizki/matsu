@@ -72,3 +72,43 @@ export function getState(key: string): string | null {
     null
   );
 }
+
+/** Target band for the verdict and alerts: [min, max] in Rp per unit. `min` 0 means no floor. */
+export type Target = { min: number; max: number };
+
+/**
+ * Current target. The dashboard-saved value (state keys `target_min` / `target_max`)
+ * wins; the TARGET_MIN / TARGET_MAX env vars are only the default before the first save.
+ */
+export function getTarget(): Target {
+  const min = Number(getState("target_min") ?? process.env.TARGET_MIN ?? 0);
+  const max = Number(getState("target_max") ?? process.env.TARGET_MAX ?? 113);
+  return { min, max };
+}
+
+/**
+ * Persist a new target where the monitor reads it, and reset the monitor's band
+ * state so the next poll alerts against the new band. Returns an error message, or null on success.
+ * This is the dashboard's only write; it uses a short-lived read-write connection.
+ */
+export function setTarget({ min, max }: Target): string | null {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return "Enter both numbers.";
+  if (min < 0 || max <= 0) return "Values must be positive (min may be 0 for no floor).";
+  if (min > max) return "Min must not be above max.";
+  let db: Database.Database | null = null;
+  try {
+    db = new Database(path(), { fileMustExist: true, timeout: 5000 });
+    const put = db.prepare("INSERT INTO state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value");
+    db.transaction(() => {
+      put.run("target_min", String(min));
+      put.run("target_max", String(max));
+      put.run("in_band", "0");
+      put.run("band_low", "inf");
+    })();
+    return null;
+  } catch {
+    return "Could not save. The monitor has not created the database yet, or it is locked. Try again.";
+  } finally {
+    db?.close();
+  }
+}

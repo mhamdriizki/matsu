@@ -5,7 +5,7 @@ type Props = { cur: number; low: number; high: number; min: number; max: number 
  * target zone (everything from the floor up to `max`) shaded.
  */
 export function TargetMeter({ cur, low, high, min, max }: Props) {
-  const a = Math.min(low, max, cur) - 0.5;
+  const a = Math.min(low, max, cur, min > 0 ? min : Infinity) - 0.5;
   const b = Math.max(high, max, cur) + 0.5;
   const pct = (v: number) => `${(((v - a) / (b - a)) * 100).toFixed(2)}%`;
   const zoneL = min > 0 ? pct(min) : "0%";

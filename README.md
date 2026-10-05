@@ -30,7 +30,9 @@ Next.js 16 + React 19, Tailwind v4, shadcn/ui, Recharts. Needs Node >= 22 (bette
 - Hero rate with verdict, change since last reading, and a target meter (current vs period low/high vs target).
 - Rate history chart with the target band shaded; range switch via `?range=24h|7d|30d|all` (default 30d).
 - Stats, monitor health (last OK, failed polls, last error), last 20 readings, light/dark mode.
-- Opens the DB read-only; shows an empty state until the monitor has stored a reading.
+- **Edit target** button sets the min/max band. It is saved in the DB (`state` keys `target_min`/`target_max`) and the monitor reads it on every poll, so alerts follow the dashboard within one poll interval (up to `POLL_MINUTES`). Saving also resets the monitor's in-band state, so the next poll re-alerts if the rate is inside the new band.
+- Reads the DB read-only, except for saving the target. Shows an empty state until the monitor has stored a reading.
+- The container runs as root so it can write the target into the file the monitor created. Anyone who can reach the dashboard can change your target; keep it on localhost or behind auth.
 - The Docker build downloads Google Fonts, so it needs network access.
 
 Local dev (no Docker): `cd dashboard && npm install && DB_PATH=../data/kurs.db npm run dev`
@@ -41,6 +43,8 @@ To see the charts before real history exists:
 **Delete `data/kurs.db` afterwards** so real monitoring starts clean.
 
 ## Alert rules
+The band comes from the dashboard's saved target; `TARGET_MIN` / `TARGET_MAX` in `.env` are only the default until you first save one.
+
 - Alert once when the rate enters `TARGET_MIN..TARGET_MAX`, again on each new low while inside,
   and once when it leaves. No repeated pings while it sits still.
 - 3 failed polls in a row triggers a "scraper failing" message; recovery triggers another.
@@ -52,6 +56,8 @@ about 24 rows a day (about 1.3 MB a year). No pruning is needed. If the dashboar
 gets heavy, downsample it to daily points in `getRates`.
 
 ## Tests
+`docker compose run --rm -v ./monitor:/app monitor python test_targets.py` checks that a dashboard-saved target overrides the env defaults and drives alerts.
+
 Parser and alert logic were exercised offline against synthetic HTML. The live BCA page was fetched
 successfully from a local machine (JPY row parsed); run step 3 on your VPS to check it from there.
 Known quirk: `source_updated_at` is currently `None` against the live page (the "Terakhir diperbarui"

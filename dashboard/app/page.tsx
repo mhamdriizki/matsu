@@ -5,15 +5,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { RateChart } from "@/components/rate-chart";
 import { TargetMeter } from "@/components/target-meter";
+import { TargetDialog } from "@/components/target-dialog";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { currency, getLatest, getRates, getState, parseRange, RANGES } from "@/lib/db";
+import { currency, getLatest, getRates, getState, getTarget, parseRange, RANGES } from "@/lib/db";
 import { when } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
-
-const TARGET_MIN = Number(process.env.TARGET_MIN || 0);
-const TARGET_MAX = Number(process.env.TARGET_MAX || 113);
 
 /** Wordmark, currency chip and theme toggle. */
 function Header() {
@@ -34,6 +32,7 @@ function Header() {
  */
 export default async function Page({ searchParams }: { searchParams: Promise<{ range?: string }> }) {
   const range = parseRange((await searchParams).range);
+  const { min: TARGET_MIN, max: TARGET_MAX } = getTarget();
   const [cur, prev] = getLatest();
   const lastOk = getState("last_ok");
   const lastError = getState("last_error");
@@ -98,6 +97,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ r
                   : `Below your floor of ${TARGET_MIN}.`}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">BCA updated {when(cur.ts)}</p>
+            <div className="mt-4"><TargetDialog min={TARGET_MIN} max={TARGET_MAX} /></div>
           </div>
           <TargetMeter cur={cur.jual} low={low} high={high} min={TARGET_MIN} max={TARGET_MAX} />
         </CardContent>

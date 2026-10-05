@@ -22,6 +22,7 @@ CURRENCY = os.getenv("CURRENCY", "JPY").upper()
 DB_PATH = os.getenv("DB_PATH", "/data/kurs.db")
 RAW_DUMP = os.getenv("RAW_DUMP", "/data/last_page.html")
 POLL_SECONDS = int(float(os.getenv("POLL_MINUTES", "60")) * 60)
+# Defaults only: the dashboard stores the live target in the `state` table (see get_targets).
 TARGET_MIN = float(os.getenv("TARGET_MIN", "0"))      # 0 = no floor (cheaper is always better)
 TARGET_MAX = float(os.getenv("TARGET_MAX", "113"))
 TG_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -184,16 +185,24 @@ def telegram(text):
     return False
 
 
-def band_text():
+def get_targets(db):
+    """Return (min, max). A value saved from the dashboard wins over the TARGET_MIN/TARGET_MAX env defaults."""
+    return (float(get_state(db, "target_min", TARGET_MIN)),
+            float(get_state(db, "target_max", TARGET_MAX)))
+
+
+def band_text(lo_v, hi_v):
     """Human-readable target band, e.g. "0 to 113"."""
-    lo = f"{TARGET_MIN:g}" if TARGET_MIN > 0 else "0"
-    return f"{lo} to {TARGET_MAX:g}"
+    lo = f"{lo_v:g}" if lo_v > 0 else "0"
+    return f"{lo} to {hi_v:g}"
 
 
 def evaluate_alerts(db, d):
     """Send an alert on entering the band, setting a new low inside it, or leaving it; silent otherwise."""
     jual = d["erate_jual"]
-    in_band = TARGET_MIN <= jual <= TARGET_MAX
+    t_min, t_max = get_targets(db)
+    band = band_text(t_min, t_max)
+    in_band = t_min <= jual <= t_max
     was_in = get_state(db, "in_band", "0") == "1"
     band_low = float(get_state(db, "band_low", "inf"))
     stamp = d["source_updated_at"] or "unknown time"
@@ -202,14 +211,14 @@ def evaluate_alerts(db, d):
               "Rates can move before you confirm; check myBCA before buying.")
 
     if in_band and not was_in:
-        telegram(f"IN TARGET BAND ({band_text()})\n{detail}")
+        telegram(f"IN TARGET BAND ({band})\n{detail}")
         set_state(db, "in_band", "1")
         set_state(db, "band_low", jual)
     elif in_band and was_in and jual < band_low:
-        telegram(f"NEW LOW inside band ({band_text()})\n{detail}\nPrevious low: {band_low:,.2f}")
+        telegram(f"NEW LOW inside band ({band})\n{detail}\nPrevious low: {band_low:,.2f}")
         set_state(db, "band_low", jual)
     elif not in_band and was_in:
-        telegram(f"Left target band ({band_text()})\n{detail}\nLow while in band: {band_low:,.2f}")
+        telegram(f"Left target band ({band})\n{detail}\nLow while in band: {band_low:,.2f}")
         set_state(db, "in_band", "0")
         set_state(db, "band_low", "inf")
 
@@ -269,7 +278,7 @@ def main():
     if "--once" in args:
         cycle(db)
         return
-    telegram(f"kurs-watch started. Watching {CURRENCY} e-Rate Jual, band {band_text()}, "
+    telegram(f"kurs-watch started. Watching {CURRENCY} e-Rate Jual, band {band_text(*get_targets(db))}, "
              f"every {POLL_SECONDS // 60} min.")
     while True:
         cycle(db)
