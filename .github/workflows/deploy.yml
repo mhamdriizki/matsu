@@ -20,12 +20,15 @@ jobs:
       - name: Set up SSH
         env:
           SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh-keyscan -t ed25519 "$VPS_HOST" 2>/dev/null | grep -v '^#' > ~/.ssh/known_hosts || true
+          [ -s ~/.ssh/known_hosts ] || { echo "Could not read the VPS host key"; exit 1; }
+          FP=$(ssh-keygen -lf ~/.ssh/known_hosts | awk '{print $2}')
+          [ "$FP" = "SHA256:S2hyoHGFroIMg7UGtQdGwTeRFeOkv35r8+sXaBWjIwo" ] || { echo "Host key does not match the expected fingerprint"; exit 1; }
 
       # The VPS key is locked to one forced command (/usr/local/bin/matsu-deploy.sh),
       # so the word "deploy" below is ignored; it only satisfies the ssh CLI.
