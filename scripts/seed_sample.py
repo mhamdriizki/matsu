@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS watches(
   target_max REAL NOT NULL CHECK(target_max > 0 AND target_max >= target_min),
   in_band INTEGER NOT NULL DEFAULT 0, band_low REAL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
-CREATE TABLE IF NOT EXISTS currencies(code TEXT PRIMARY KEY, name TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS currencies(code TEXT PRIMARY KEY, name TEXT NOT NULL, flag TEXT);
 """  # keep in sync with monitor/monitor.py
 
 # code: (name, base rate, swing, noise, target_min, target_max)

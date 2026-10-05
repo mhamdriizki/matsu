@@ -3,9 +3,10 @@
 import { useState, type ReactNode } from "react";
 import { Plus } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Flag } from "@/components/flag";
 import { cn } from "@/lib/utils";
 
-export type TabItem = { code: string; rate: string | null; status: "in" | "above" | "below" | "none" };
+export type TabItem = { code: string; flag?: string; rate: string | null; status: "in" | "above" | "below" | "none" };
 
 const DOT = { in: "bg-good", above: "bg-warn", below: "bg-primary", none: "bg-muted-foreground/40" } as const;
 
@@ -18,7 +19,7 @@ type Props = {
 };
 
 /**
- * One tab per watched currency (code, current rate, status dot) plus a "+" tab. Switching is instant
+ * One tab per watched currency (flag, code, status dot, current rate) plus a "+" tab. Switching is instant
  * (panels are already rendered); the URL is kept in sync with replaceState so `?c=` can be bookmarked.
  */
 export function CurrencyTabs({ value, range, items, panels, addPanel }: Props) {
@@ -36,8 +37,9 @@ export function CurrencyTabs({ value, range, items, panels, addPanel }: Props) {
         {items.map((it) => (
           <TabsTrigger key={it.code} value={it.code} className="h-auto flex-none flex-col items-start gap-0 px-4 py-2">
             <span className="flex items-center gap-2 font-semibold">
-              <span className={cn("size-2 rounded-full", DOT[it.status])} aria-hidden />
+              <Flag src={it.flag} />
               {it.code}
+              <span className={cn("size-2 rounded-full", DOT[it.status])} aria-hidden />
             </span>
             <span className="text-xs font-normal text-muted-foreground">{it.rate ?? "no data"}</span>
           </TabsTrigger>

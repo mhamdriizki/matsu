@@ -3,6 +3,7 @@ import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Flag } from "@/components/flag";
 import { RateChart } from "@/components/rate-chart";
 import { StopWatchingDialog } from "@/components/stop-watching-dialog";
 import { TargetDialog } from "@/components/target-dialog";
@@ -12,7 +13,7 @@ import { dp, fmt, when } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 /** Everything for one currency: hero + target meter, history chart with range switch, stats, readings. */
-export function CurrencyPanel({ watch, range }: { watch: Watch; range: RangeKey }) {
+export function CurrencyPanel({ watch, range, flag }: { watch: Watch; range: RangeKey; flag?: string }) {
   const { code, min, max } = watch;
   const [cur, prev] = getLatest(code);
 
@@ -49,7 +50,9 @@ export function CurrencyPanel({ watch, range }: { watch: Watch; range: RangeKey 
       <Card>
         <CardContent className="grid gap-6 md:grid-cols-2 md:items-center">
           <div>
-            <p className="text-sm text-muted-foreground">Rp per 1 {code}, what you pay in myBCA</p>
+            <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <Flag src={flag} />Rp per 1 {code}, what you pay in myBCA
+            </p>
             <p className="my-1 text-6xl leading-none font-bold tracking-tighter sm:text-7xl">{fmt(cur.jual, d)}</p>
             <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
               <Badge className={cn(inBand ? "bg-good/15 text-good" : "bg-warn/15 text-warn")}>

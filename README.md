@@ -46,10 +46,12 @@ on restart and changing `WATCHLIST` has no effect. Rates differ a lot in scale (
 ## Dashboard
 Next.js 16 + React 19, Tailwind v4, shadcn/ui, Recharts. Needs Node >= 22 (better-sqlite3 13).
 
-- Tabs: one per watched currency showing its code, current rate and a status dot (green in target, orange
+- Tabs: one per watched currency showing BCA's flag, its code, current rate and a status dot (green in target, orange
   above, blue below the floor). `?c=SGD` opens a tab directly.
 - Per tab: hero rate with verdict and change since last reading, target meter, history chart with the target
   band shaded, range switch `?range=24h|3d|7d|10d` (default 10d), stats, last 20 readings.
+- Flags are BCA's own 16px images. The monitor saves each watched currency's flag once (in `currencies.flag`,
+  only from BCA's host); until it is saved, or if the download fails, the tab simply shows no flag.
 - Monitor health (last OK, failed polls, last error), light/dark mode.
 - Reads the DB read-only, except for add / edit / stop watching. Shows "Waiting for the monitor" until the
   monitor has created the database.

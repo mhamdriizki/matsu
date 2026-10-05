@@ -4,7 +4,7 @@ import { AddCurrencyForm } from "@/components/add-currency-form";
 import { CurrencyPanel } from "@/components/currency-panel";
 import { CurrencyTabs, type TabItem } from "@/components/currency-tabs";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { dbReady, getCatalogue, getLatest, getState, getWatches, parseRange } from "@/lib/db";
+import { dbReady, getCatalogue, getFlags, getLatest, getState, getWatches, parseRange } from "@/lib/db";
 import { dp, fmt, when } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -77,12 +77,13 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ c
   const wanted = (sp.c ?? "").toUpperCase();
   const active = watches.some((w) => w.code === wanted) ? wanted : (watches[0]?.code ?? "add");
 
+  const flags = getFlags();
   const items: TabItem[] = watches.map((w) => {
     const cur = getLatest(w.code)[0];
     const status = !cur ? "none" : cur.jual > w.max ? "above" : cur.jual < w.min ? "below" : "in";
-    return { code: w.code, rate: cur ? fmt(cur.jual, dp(cur.jual)) : null, status };
+    return { code: w.code, flag: flags[w.code], rate: cur ? fmt(cur.jual, dp(cur.jual)) : null, status };
   });
-  const panels = Object.fromEntries(watches.map((w) => [w.code, <CurrencyPanel key={w.code} watch={w} range={range} />]));
+  const panels = Object.fromEntries(watches.map((w) => [w.code, <CurrencyPanel key={w.code} watch={w} range={range} flag={flags[w.code]} />]));
 
   return (
     <main className="mx-auto max-w-4xl px-4 py-8 pb-16">

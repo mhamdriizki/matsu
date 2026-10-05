@@ -18,7 +18,7 @@ BCA page --> monitor (Python, monitor/monitor.py) --> SQLite ./data/kurs.db <-- 
   are `addWatch`, `setTarget`, `removeWatch` (read-write connection via `withWriteDb`).
 - Tables: `rates(id, fetched_at, source_updated_at, currency, erate_*/tt_*/notes_* beli+jual)`,
   `watches(currency PK, target_min, target_max, in_band, band_low NULL, created_at)` (the watchlist and per-currency
-  alert state), `currencies(code PK, name)` (every code seen on the BCA page; feeds the "+" tab dropdown),
+  alert state), `currencies(code PK, name, flag)` (every code seen on the BCA page; feeds the "+" tab dropdown; `flag` = BCA's 16px PNG as a data URI, saved once per watched currency by `fetch_flags`, BCA host only),
   `state(key, value)` with `consecutive_failures`, `last_ok`, `last_error`, `watchlist_seeded`.
 - Dashboard: shadcn `Tabs` (client, `components/currency-tabs.tsx`) over server-rendered `CurrencyPanel`s;
   `?c=CODE` picks the tab, `?range=` the window. Binds to `127.0.0.1:3000`, no auth.

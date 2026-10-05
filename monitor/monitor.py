@@ -9,6 +9,7 @@ Usage:
   python monitor.py --once          one full cycle (store + alert logic), then exit
   python monitor.py --test-telegram send a test message
 """
+import base64
 import datetime as dt
 import logging
 import os
@@ -16,6 +17,7 @@ import re
 import sqlite3
 import sys
 import time
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from selectolax.lexbor import LexborHTMLParser as HTMLParser
@@ -94,7 +96,7 @@ def parse_updated(html):
 
 def parse_rows(html):
     """Return {CODE: rates dict} for every currency row on the page (e-Rate / TT Counter / Bank Notes
-    buy+sell plus source_updated_at). Implausible rows are logged and skipped. Raises ParseError if none parse."""
+    buy+sell plus source_updated_at and the flag image path `flag_src`). Implausible rows are logged and skipped. Raises ParseError if none parse."""
     tree = HTMLParser(html)
     stamp = parse_updated(html)
     rows = {}
@@ -110,6 +112,8 @@ def parse_rows(html):
             log.warning("%s: implausible values skipped: %s", cells[0], d)
             continue
         d["source_updated_at"] = stamp
+        img = tr.css_first("img")
+        d["flag_src"] = img.attributes.get("src") if img else None
         rows[cells[0]] = d
     if not rows:
         raise ParseError("no currency rows found (page layout changed or blocked?)")
@@ -138,7 +142,7 @@ CREATE TABLE IF NOT EXISTS watches(
   band_low REAL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
-CREATE TABLE IF NOT EXISTS currencies(code TEXT PRIMARY KEY, name TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS currencies(code TEXT PRIMARY KEY, name TEXT NOT NULL, flag TEXT);
 """
 
 
@@ -148,6 +152,8 @@ def open_db():
     db = sqlite3.connect(DB_PATH, timeout=10)
     db.row_factory = sqlite3.Row
     db.executescript(SCHEMA)
+    if "flag" not in [r[1] for r in db.execute("PRAGMA table_info(currencies)")]:  # DB from before flags
+        db.execute("ALTER TABLE currencies ADD COLUMN flag TEXT")
     return db
 
 
@@ -202,6 +208,28 @@ def upsert_currencies(db, codes):
                    "ON CONFLICT(code) DO UPDATE SET name=excluded.name",
                    [(c, NAMES.get(c, c)) for c in codes])
     db.commit()
+
+
+def fetch_flags(db, rows, codes):
+    """Save BCA's flag image (a data: URI, so the dashboard needs no file serving) for each of `codes` that has
+    none yet. Only images from BCA's own host and under 20 KB are accepted; any failure is a warning, never a failed poll."""
+    for code in codes:
+        src = (rows.get(code) or {}).get("flag_src")
+        if not src or db.execute("SELECT flag FROM currencies WHERE code=?", (code,)).fetchone()[0]:
+            continue
+        url = urljoin(URL, src)
+        try:
+            if urlparse(url).netloc != urlparse(URL).netloc:
+                raise ValueError("flag is not on BCA's host")
+            r = httpx.get(url, headers={"User-Agent": USER_AGENT}, timeout=15)
+            r.raise_for_status()
+            if r.headers.get("content-type", "").split(";")[0] != "image/png" or len(r.content) > 20_000:
+                raise ValueError("not a small PNG")
+            db.execute("UPDATE currencies SET flag=? WHERE code=?",
+                       ("data:image/png;base64," + base64.b64encode(r.content).decode(), code))
+            db.commit()
+        except Exception as e:
+            log.warning("flag for %s not saved: %s", code, type(e).__name__)
 
 
 def get_watches(db):
@@ -339,6 +367,7 @@ def cycle(db):
     set_state(db, "consecutive_failures", 0)
     set_state(db, "last_ok", dt.datetime.now(dt.timezone.utc).isoformat())
     upsert_currencies(db, rows)
+    fetch_flags(db, rows, [w["currency"] for w in watches])
     for w in watches:
         code = w["currency"]
         d = rows.get(code)

@@ -21,10 +21,11 @@ assert [w["currency"] for w in m.get_watches(db)] == ["JPY"]
 HTML = """<p>Terakhir diperbarui pada 5 Okt 2026 10.31 WIB</p><table>
 <tr><th>Mata Uang</th><th>a</th><th>b</th><th>c</th><th>d</th><th>e</th><th>f</th></tr>
 <tr><td>JPY</td><td>113,27</td><td>113,64</td><td>111,62</td><td>114,58</td><td>111,22</td><td>114,99</td></tr>
-<tr><td>SGD</td><td>13.883,92</td><td>14.087,51</td><td>13.815,69</td><td>14.085,61</td><td>13.809,00</td><td>14.157,00</td></tr>
+<tr><td><img src=/flags/sgd.png>SGD</td><td>13.883,92</td><td>14.087,51</td><td>13.815,69</td><td>14.085,61</td><td>13.809,00</td><td>14.157,00</td></tr>
 <tr><td>BAD</td><td>10,00</td><td>5,00</td><td>1</td><td>1</td><td>1</td><td>1</td></tr></table>"""
 rows = m.parse_rows(HTML)
 assert set(rows) == {"JPY", "SGD"} and rows["SGD"]["erate_jual"] == 14087.51
+assert rows["JPY"]["flag_src"] is None and rows["SGD"]["flag_src"] == "/flags/sgd.png"
 assert rows["JPY"]["source_updated_at"].startswith("2026-10-05T10:31")
 try:
     m.parse_rows("<html></html>"); assert False
@@ -35,6 +36,25 @@ except m.ParseError:
 assert m.store_if_new(db, "SGD", rows["SGD"]) is False
 assert m.store_if_new(db, "JPY", rows["JPY"]) is True
 assert m.store_if_new(db, "JPY", rows["JPY"]) is False
+
+# --- fetch_flags: saved once as a data URI, only from BCA's host, small PNGs only; failures never raise
+db.execute("INSERT INTO currencies(code,name) VALUES('SGD','Singapore Dollar')")
+calls = []
+class R:
+    headers, content = {"content-type": "image/png"}, b"\x89PNG"
+    def raise_for_status(self): pass
+m.httpx.get = lambda url, **k: (calls.append(url), R())[1]
+m.fetch_flags(db, rows, ["SGD", "JPY"])
+flag = db.execute("SELECT flag FROM currencies WHERE code='SGD'").fetchone()[0]
+assert flag.startswith("data:image/png;base64,") and calls == ["https://www.bca.co.id/flags/sgd.png"]
+m.fetch_flags(db, rows, ["SGD"]); assert len(calls) == 1                    # already saved: no refetch
+db.execute("UPDATE currencies SET flag=NULL"); rows["SGD"]["flag_src"] = "https://evil.example/x.png"
+m.fetch_flags(db, rows, ["SGD"]); assert len(calls) == 1                    # foreign host refused
+assert db.execute("SELECT flag FROM currencies WHERE code='SGD'").fetchone()[0] is None
+rows["SGD"]["flag_src"] = "/flags/sgd.png"; R.headers = {"content-type": "text/html"}
+m.fetch_flags(db, rows, ["SGD"])                                            # wrong type: warning only
+assert db.execute("SELECT flag FROM currencies WHERE code='SGD'").fetchone()[0] is None
+db.execute("DELETE FROM currencies")
 
 # --- cycle: a missing watched currency only warns; none found counts as a failure
 m.telegram = lambda t: None

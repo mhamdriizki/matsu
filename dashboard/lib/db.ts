@@ -76,6 +76,19 @@ export function getCatalogue(): CatalogueItem[] {
   );
 }
 
+/** Flag images (data: URIs saved by the monitor from BCA's page), keyed by currency code. Empty until saved. */
+export function getFlags(): Record<string, string> {
+  return withDb(
+    (db) =>
+      Object.fromEntries(
+        (db.prepare("SELECT code, flag FROM currencies WHERE flag IS NOT NULL").all() as { code: string; flag: string }[]).map(
+          (r) => [r.code, r.flag]
+        )
+      ),
+    {}
+  );
+}
+
 /** Readings of `code` in the last `days` days, oldest first. */
 export function getRates(code: string, days: number): Rate[] {
   const since = new Date(Date.now() - days * 86400_000).toISOString();
