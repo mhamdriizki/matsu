@@ -128,7 +128,7 @@
     }
 }
 
-/* Kurs Watch palette: ai-iro (indigo) ink, matcha = in target, persimmon = above target. */
+/* Matsu palette: ai-iro (indigo) ink, matcha = in target, persimmon = above target. */
 @theme inline {
   --color-good: var(--good);
   --color-warn: var(--warn);

@@ -2,7 +2,7 @@
 
 import { Area, AreaChart, CartesianGrid, ReferenceArea, ReferenceLine, XAxis, YAxis } from "recharts";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
-import { day, when } from "@/lib/format";
+import { day, dp, fmt, padded, when } from "@/lib/format";
 
 export type Point = { t: number; jual: number; beli: number };
 
@@ -11,11 +11,13 @@ const config = {
   beli: { label: "Beli", color: "var(--chart-2)" },
 } satisfies ChartConfig;
 
-/** Jual/Beli history with the target corridor shaded. `min` 0 means "no floor". */
+/** Jual/Beli history with the target corridor shaded. `min` 0 means "no floor". Padding and decimals scale with the rate. */
 export function RateChart({ points, min, max }: { points: Point[]; min: number; max: number }) {
   const vals = points.flatMap((p) => [p.jual, p.beli]);
-  const lo = Math.floor(Math.min(...vals, max, min > 0 ? min : Infinity) - 0.5);
-  const hi = Math.ceil(Math.max(...vals, max) + 0.5);
+  const [lo, hi] = padded(Math.min(...vals, max, min > 0 ? min : Infinity), Math.max(...vals, max));
+  const span = hi - lo;
+  const tickDp = Math.min(2, Math.max(0, Math.ceil(-Math.log10(span / 4))));
+  const width = 12 + 7 * fmt(hi, tickDp).length;
 
   return (
     <ChartContainer config={config} className="aspect-auto h-64 w-full sm:h-72">
@@ -32,7 +34,7 @@ export function RateChart({ points, min, max }: { points: Point[]; min: number; 
           y={max}
           stroke="var(--good)"
           strokeDasharray="4 4"
-          label={{ value: `target ${max}`, position: "insideTopRight", fill: "var(--good)", fontSize: 11 }}
+          label={{ value: `target ${fmt(max, dp(max))}`, position: "insideTopRight", fill: "var(--good)", fontSize: 11 }}
         />
         <XAxis
           dataKey="t"
@@ -45,7 +47,14 @@ export function RateChart({ points, min, max }: { points: Point[]; min: number; 
           tickMargin={8}
           minTickGap={48}
         />
-        <YAxis domain={[lo, hi]} width={40} tickLine={false} axisLine={false} tickFormatter={(v) => v.toFixed(0)} />
+        <YAxis
+          domain={[lo, hi]}
+          width={width}
+          tickCount={5}
+          tickLine={false}
+          axisLine={false}
+          tickFormatter={(v) => fmt(v, tickDp)}
+        />
         <ChartTooltip
           content={
             <ChartTooltipContent

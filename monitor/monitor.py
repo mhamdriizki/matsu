@@ -1,30 +1,34 @@
-"""BCA kurs watcher: scrape the e-Rate row, store history, alert via Telegram.
+"""BCA kurs watcher: scrape e-Rates for every watched currency, store history, alert via Telegram.
+
+The watchlist (currency + target band) lives in the `watches` table and is edited from the dashboard.
+The WATCHLIST env var only seeds it once.
 
 Usage:
   python monitor.py                 run forever (poll every POLL_MINUTES)
-  python monitor.py --dry           fetch + parse once, print result, touch nothing
+  python monitor.py --dry [CODE]    fetch + parse once, print every currency (or just CODE), touch nothing
   python monitor.py --once          one full cycle (store + alert logic), then exit
   python monitor.py --test-telegram send a test message
 """
+import base64
 import datetime as dt
+import html
 import logging
 import os
 import re
 import sqlite3
 import sys
 import time
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from selectolax.lexbor import LexborHTMLParser as HTMLParser
 
 URL = os.getenv("KURS_URL", "https://www.bca.co.id/id/informasi/kurs")
-CURRENCY = os.getenv("CURRENCY", "JPY").upper()
 DB_PATH = os.getenv("DB_PATH", "/data/kurs.db")
 RAW_DUMP = os.getenv("RAW_DUMP", "/data/last_page.html")
 POLL_SECONDS = int(float(os.getenv("POLL_MINUTES", "60")) * 60)
-# Defaults only: the dashboard stores the live target in the `state` table (see get_targets).
-TARGET_MIN = float(os.getenv("TARGET_MIN", "0"))      # 0 = no floor (cheaper is always better)
-TARGET_MAX = float(os.getenv("TARGET_MAX", "113"))
+# One-time seed, "CODE:min:max,...". Only used while the DB has never been seeded (see seed_watches).
+WATCHLIST = os.getenv("WATCHLIST", "")
 TG_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 HEALTHCHECK_URL = os.getenv("HEALTHCHECK_URL", "")
@@ -39,6 +43,13 @@ WIB = dt.timezone(dt.timedelta(hours=7))
 MONTHS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "mei": 5, "may": 5, "jun": 6,
           "jul": 7, "agu": 8, "aug": 8, "sep": 9, "okt": 10, "oct": 10,
           "nov": 11, "des": 12, "dec": 12}
+# Display names for the dashboard's "Add currency" list; unknown codes fall back to the code itself.
+NAMES = {"AUD": "Australian Dollar", "CAD": "Canadian Dollar", "CHF": "Swiss Franc", "CNY": "Chinese Yuan",
+         "DKK": "Danish Krone", "EUR": "Euro", "GBP": "British Pound", "HKD": "Hong Kong Dollar",
+         "JPY": "Japanese Yen", "MYR": "Malaysian Ringgit", "NOK": "Norwegian Krone",
+         "NZD": "New Zealand Dollar", "SAR": "Saudi Riyal", "SEK": "Swedish Krona",
+         "SGD": "Singapore Dollar", "THB": "Thai Baht", "USD": "US Dollar"}
+RATE_KEYS = ["erate_beli", "erate_jual", "tt_beli", "tt_jual", "notes_beli", "notes_jual"]
 
 log = logging.getLogger("kurs")
 
@@ -84,24 +95,30 @@ def parse_updated(html):
     return dt.datetime(int(year), month, int(day), int(hh), int(mm), tzinfo=WIB).isoformat()
 
 
-def parse_page(html):
-    """Return dict with e-Rate / TT Counter / Bank Notes buy+sell for CURRENCY."""
+def parse_rows(html):
+    """Return {CODE: rates dict} for every currency row on the page (e-Rate / TT Counter / Bank Notes
+    buy+sell plus source_updated_at and the flag image path `flag_src`). Implausible rows are logged and skipped. Raises ParseError if none parse."""
     tree = HTMLParser(html)
+    stamp = parse_updated(html)
+    rows = {}
     for tr in tree.css("tr"):
         cells = [c.text(strip=True) for c in tr.css("td,th")]
-        if len(cells) < 7 or cells[0].upper() != CURRENCY:
+        if len(cells) < 7 or not re.fullmatch(r"[A-Z]{3}", cells[0]):
             continue
         try:
-            vals = [to_num(c) for c in cells[1:7]]
+            d = dict(zip(RATE_KEYS, [to_num(c) for c in cells[1:7]]))
         except ValueError:
             continue
-        keys = ["erate_beli", "erate_jual", "tt_beli", "tt_jual", "notes_beli", "notes_jual"]
-        d = dict(zip(keys, vals))
         if not d["erate_jual"] or not d["erate_beli"] or d["erate_jual"] < d["erate_beli"]:
-            raise ParseError(f"implausible values: {d}")
-        d["source_updated_at"] = parse_updated(html)
-        return d
-    raise ParseError(f"no {CURRENCY} row found (page layout changed or blocked?)")
+            log.warning("%s: implausible values skipped: %s", cells[0], d)
+            continue
+        d["source_updated_at"] = stamp
+        img = tr.css_first("img")
+        d["flag_src"] = img.attributes.get("src") if img else None
+        rows[cells[0]] = d
+    if not rows:
+        raise ParseError("no currency rows found (page layout changed or blocked?)")
+    return rows
 
 
 # ---------- storage ----------
@@ -118,14 +135,26 @@ CREATE TABLE IF NOT EXISTS rates(
 );
 CREATE INDEX IF NOT EXISTS idx_rates_cur_time ON rates(currency, fetched_at);
 CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS watches(
+  currency TEXT PRIMARY KEY,
+  target_min REAL NOT NULL DEFAULT 0 CHECK(target_min >= 0),
+  target_max REAL NOT NULL CHECK(target_max > 0 AND target_max >= target_min),
+  in_band INTEGER NOT NULL DEFAULT 0,
+  band_low REAL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE IF NOT EXISTS currencies(code TEXT PRIMARY KEY, name TEXT NOT NULL, flag TEXT);
 """
 
 
 def open_db():
     """Open (creating if needed) the SQLite DB at DB_PATH and ensure the schema exists."""
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    db = sqlite3.connect(DB_PATH)
+    db = sqlite3.connect(DB_PATH, timeout=10)
+    db.row_factory = sqlite3.Row
     db.executescript(SCHEMA)
+    if "flag" not in [r[1] for r in db.execute("PRAGMA table_info(currencies)")]:  # DB from before flags
+        db.execute("ALTER TABLE currencies ADD COLUMN flag TEXT")
     return db
 
 
@@ -142,34 +171,105 @@ def set_state(db, key, value):
     db.commit()
 
 
-def store_if_new(db, d):
-    """Insert only when BCA's own 'last updated' stamp (or the value) changed."""
+def parse_watchlist(s):
+    """Parse "JPY:110:113,SGD:13720:13900" into [(code, min, max)]. Bad items are logged and skipped."""
+    items = []
+    for raw in filter(None, (p.strip() for p in s.split(","))):
+        try:
+            code, lo, hi = raw.split(":")
+            code, lo, hi = code.strip().upper(), float(lo), float(hi)
+            if not re.fullmatch(r"[A-Z]{3}", code):
+                raise ValueError("code must be 3 letters")
+            if lo < 0 or hi <= 0 or lo > hi:
+                raise ValueError("need 0 <= min <= max and max > 0")
+        except ValueError as e:
+            log.error("WATCHLIST item %r skipped: %s", raw, e)
+            continue
+        items.append((code, lo, hi))
+    return items
+
+
+def seed_watches(db, items):
+    """Insert the WATCHLIST items once per DB. After the first seed (flag `watchlist_seeded`), the dashboard
+    owns the list, so a currency removed there is never re-added on restart. Returns rows inserted."""
+    if get_state(db, "watchlist_seeded"):
+        return 0
+    n = 0
+    for code, lo, hi in items:
+        n += db.execute("INSERT OR IGNORE INTO watches(currency,target_min,target_max) VALUES(?,?,?)",
+                        (code, lo, hi)).rowcount
+    db.commit()
+    set_state(db, "watchlist_seeded", "1")
+    return n
+
+
+def upsert_currencies(db, codes):
+    """Record every currency code seen on the BCA page (feeds the dashboard's Add list)."""
+    db.executemany("INSERT INTO currencies(code,name) VALUES(?,?) "
+                   "ON CONFLICT(code) DO UPDATE SET name=excluded.name",
+                   [(c, NAMES.get(c, c)) for c in codes])
+    db.commit()
+
+
+def fetch_flags(db, rows, codes):
+    """Save BCA's flag image (a data: URI, so the dashboard needs no file serving) for each of `codes` that has
+    none yet. Only images from BCA's own host and under 20 KB are accepted; any failure is a warning, never a failed poll."""
+    for code in codes:
+        src = (rows.get(code) or {}).get("flag_src")
+        if not src or db.execute("SELECT flag FROM currencies WHERE code=?", (code,)).fetchone()[0]:
+            continue
+        url = urljoin(URL, src)
+        try:
+            if urlparse(url).netloc != urlparse(URL).netloc:
+                raise ValueError("flag is not on BCA's host")
+            r = httpx.get(url, headers={"User-Agent": USER_AGENT}, timeout=15)
+            r.raise_for_status()
+            if r.headers.get("content-type", "").split(";")[0] != "image/png" or len(r.content) > 20_000:
+                raise ValueError("not a small PNG")
+            db.execute("UPDATE currencies SET flag=? WHERE code=?",
+                       ("data:image/png;base64," + base64.b64encode(r.content).decode(), code))
+            db.commit()
+        except Exception as e:
+            log.warning("flag for %s not saved: %s", code, type(e).__name__)
+
+
+def get_watches(db):
+    """All watched currencies in tab order (oldest first)."""
+    return db.execute("SELECT * FROM watches ORDER BY created_at, currency").fetchall()
+
+
+def store_if_new(db, code, d):
+    """Insert only when BCA's own 'last updated' stamp (or the value) changed, and only while `code`
+    is still watched (the dashboard may have removed it mid-cycle)."""
     last = db.execute(
         "SELECT source_updated_at, erate_jual FROM rates WHERE currency=? ORDER BY id DESC LIMIT 1",
-        (CURRENCY,),
+        (code,),
     ).fetchone()
     if last:
         same_stamp = d["source_updated_at"] and last[0] == d["source_updated_at"]
         same_value = not d["source_updated_at"] and last[1] == d["erate_jual"]
         if same_stamp or same_value:
             return False
-    db.execute(
+    n = db.execute(
         "INSERT INTO rates(fetched_at,source_updated_at,currency,erate_beli,erate_jual,"
-        "tt_beli,tt_jual,notes_beli,notes_jual) VALUES(?,?,?,?,?,?,?,?,?)",
-        (dt.datetime.now(dt.timezone.utc).isoformat(), d["source_updated_at"], CURRENCY,
+        "tt_beli,tt_jual,notes_beli,notes_jual) "
+        "SELECT ?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM watches WHERE currency=?)",
+        (dt.datetime.now(dt.timezone.utc).isoformat(), d["source_updated_at"], code,
          d["erate_beli"], d["erate_jual"], d["tt_beli"], d["tt_jual"],
-         d["notes_beli"], d["notes_jual"]),
-    )
+         d["notes_beli"], d["notes_jual"], code),
+    ).rowcount
     db.commit()
-    return True
+    return n > 0
 
 
 def prune_old(db):
-    """Delete rate rows older than RETENTION_DAYS (by fetched_at). The newest row per currency is always
-    kept, so the dashboard still has a current reading if BCA has not changed for a long time."""
+    """Delete rate rows older than RETENTION_DAYS (by fetched_at), plus all rows of currencies that are no
+    longer watched. The newest row per currency is otherwise kept, so the dashboard still has a current
+    reading if BCA has not changed for a long time."""
     cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=RETENTION_DAYS)).isoformat()
     n = db.execute(
-        "DELETE FROM rates WHERE fetched_at < ? AND id NOT IN (SELECT MAX(id) FROM rates GROUP BY currency)",
+        "DELETE FROM rates WHERE (fetched_at < ? AND id NOT IN (SELECT MAX(id) FROM rates GROUP BY currency)) "
+        "OR currency NOT IN (SELECT currency FROM watches)",
         (cutoff,),
     ).rowcount
     db.commit()
@@ -179,14 +279,14 @@ def prune_old(db):
 # ---------- alerts ----------
 
 def telegram(text):
-    """Send `text` to the configured chat. Returns True on success; logs instead if unconfigured."""
+    """Send `text` (Telegram HTML: <b>, <i>, <code>; escape dynamic parts) to the configured chat. Returns True on success; logs instead if unconfigured."""
     if not (TG_TOKEN and TG_CHAT):
         log.warning("Telegram not configured; would send: %s", text)
         return False
     try:
         r = httpx.post(
             f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
-            json={"chat_id": TG_CHAT, "text": text, "disable_web_page_preview": True},
+            json={"chat_id": TG_CHAT, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True},
             timeout=15,
         )
         r.raise_for_status()
@@ -198,10 +298,19 @@ def telegram(text):
     return False
 
 
-def get_targets(db):
-    """Return (min, max). A value saved from the dashboard wins over the TARGET_MIN/TARGET_MAX env defaults."""
-    return (float(get_state(db, "target_min", TARGET_MIN)),
-            float(get_state(db, "target_max", TARGET_MAX)))
+def flag_emoji(code):
+    """Flag emoji for a currency code: the first two letters are the country (JPY -> JP, EUR -> EU)."""
+    return "".join(chr(0x1F1E6 + ord(c) - 65) for c in code[:2].upper())
+
+
+def num(v, ref):
+    """Format `v` with thousands separators: 2 decimals for small rates (JPY ~113), none for large (SGD ~14,000)."""
+    return f"{v:,.{2 if ref < 1000 else 0}f}"
+
+
+def trim(v):
+    """Thousands separators, up to 2 decimals, no trailing zeros: 110 -> "110", 13720 -> "13,720", 112.5 -> "112.5"."""
+    return f"{v:,.2f}".rstrip("0").rstrip(".")
 
 
 def band_text(lo_v, hi_v):
@@ -210,41 +319,65 @@ def band_text(lo_v, hi_v):
     return f"{lo} to {hi_v:g}"
 
 
-def evaluate_alerts(db, d):
-    """Send an alert on entering the band, setting a new low inside it, or leaving it; silent otherwise."""
-    jual = d["erate_jual"]
-    t_min, t_max = get_targets(db)
-    band = band_text(t_min, t_max)
-    in_band = t_min <= jual <= t_max
-    was_in = get_state(db, "in_band", "0") == "1"
-    band_low = float(get_state(db, "band_low", "inf"))
-    stamp = d["source_updated_at"] or "unknown time"
-    detail = (f"{CURRENCY} e-Rate Jual: {jual:,.2f} (Beli {d['erate_beli']:,.2f})\n"
-              f"BCA stamp: {stamp}\n"
-              "Rates can move before you confirm; check myBCA before buying.")
+def alert_text(w, d, kind, low=None):
+    """Telegram message for one alert. kind: "in" (entered band), "low" (new low inside), "out" (left band).
+    Green circle = inside your target, red = outside. `low` is the previous (or in-band) low for "low"/"out"."""
+    code, jual = w["currency"], d["erate_jual"]
+    icon, title = {"in": ("\U0001F7E2", "IN TARGET"), "low": ("\U0001F7E2", "NEW LOW"),
+                   "out": ("\U0001F534", "LEFT TARGET")}[kind]
+    lo = trim(w["target_min"]) if w["target_min"] > 0 else "0"
+    lines = [f"{icon} <b>{flag_emoji(code)} {code} \u00b7 {title}</b>",
+             "",
+             f"\U0001F4B0 <b>{num(jual, jual)}</b> Rp per 1 {code} (Jual)",
+             f"\U0001F3AF Target {lo} \u2013 {trim(w['target_max'])}",
+             f"\U0001F3F7 Beli {num(d['erate_beli'], jual)}"]
+    if kind == "low":
+        lines.append(f"\U0001F4C9 Previous low {num(low, jual)}")
+    if kind == "out":
+        lines.append(f"\U0001F4CA Low while in target {num(low, jual)}")
+    if d["source_updated_at"]:
+        lines.append(f"\U0001F552 BCA {html.escape(d['source_updated_at'])}")
+    lines += ["", "<i>Rates can move before you confirm. Check myBCA before buying.</i>"]
+    return "\n".join(lines)
+
+
+def evaluate_alerts(db, w, d):
+    """For watch row `w`: alert on entering the band, setting a new low inside it, or leaving it; silent
+    otherwise. Alert state (in_band, band_low) is stored per currency in `watches`."""
+    code, jual = w["currency"], d["erate_jual"]
+    in_band = w["target_min"] <= jual <= w["target_max"]
+    was_in = bool(w["in_band"])
+    band_low = w["band_low"] if w["band_low"] is not None else float("inf")
+
+    def save(flag, low):
+        db.execute("UPDATE watches SET in_band=?, band_low=? WHERE currency=?", (flag, low, code))
+        db.commit()
 
     if in_band and not was_in:
-        telegram(f"IN TARGET BAND ({band})\n{detail}")
-        set_state(db, "in_band", "1")
-        set_state(db, "band_low", jual)
+        telegram(alert_text(w, d, "in"))
+        save(1, jual)
     elif in_band and was_in and jual < band_low:
-        telegram(f"NEW LOW inside band ({band})\n{detail}\nPrevious low: {band_low:,.2f}")
-        set_state(db, "band_low", jual)
+        telegram(alert_text(w, d, "low", band_low))
+        save(1, jual)
     elif not in_band and was_in:
-        telegram(f"Left target band ({band})\n{detail}\nLow while in band: {band_low:,.2f}")
-        set_state(db, "in_band", "0")
-        set_state(db, "band_low", "inf")
+        telegram(alert_text(w, d, "out", band_low))
+        save(0, None)
 
 
 # ---------- main cycle ----------
 
 def cycle(db):
-    """One poll: fetch, parse, store, alert; tracks consecutive failures and pings the healthcheck."""
+    """One poll: fetch once, then for every watched currency store and alert; prunes old rows, tracks
+    consecutive failures and pings the healthcheck. A watched currency missing from the page is only a
+    warning, unless none of them are found (then the scrape counts as failed)."""
     fails = int(get_state(db, "consecutive_failures", "0"))
+    watches = get_watches(db)
     try:
         html = fetch_html()
         try:
-            d = parse_page(html)
+            rows = parse_rows(html)
+            if watches and not any(w["currency"] in rows for w in watches):
+                raise ParseError("none of the watched currencies were found on the page")
         except ParseError:
             try:
                 with open(RAW_DUMP, "w", encoding="utf-8") as f:
@@ -258,21 +391,29 @@ def cycle(db):
         set_state(db, "last_error", f"{dt.datetime.now(dt.timezone.utc).isoformat()} {type(e).__name__}: {e}")
         log.error("cycle failed (%d in a row): %s", fails, e)
         if fails == FAIL_ALERT_AFTER:
-            telegram(f"matsu is failing ({fails} polls in a row).\n{type(e).__name__}: {e}\n"
-                     "No rate alerts until fixed.")
+            telegram(f"\U0001F6A8 <b>matsu is failing</b> ({fails} polls in a row)\n"
+                     f"<code>{html.escape(f'{type(e).__name__}: {e}')}</code>\nNo rate alerts until fixed.")
         return
 
     if fails >= FAIL_ALERT_AFTER:
-        telegram("matsu recovered; polling normally again.")
+        telegram("\u2705 <b>matsu recovered</b>; polling normally again.")
     set_state(db, "consecutive_failures", 0)
     set_state(db, "last_ok", dt.datetime.now(dt.timezone.utc).isoformat())
-    inserted = store_if_new(db, d)
+    upsert_currencies(db, rows)
+    fetch_flags(db, rows, [w["currency"] for w in watches])
+    for w in watches:
+        code = w["currency"]
+        d = rows.get(code)
+        if d is None:
+            log.warning("%s is watched but not on the page", code)
+            continue
+        inserted = store_if_new(db, code, d)
+        log.info("%s e-Rate Jual=%s stamp=%s %s", code, d["erate_jual"],
+                 d["source_updated_at"], "(new)" if inserted else "(unchanged)")
+        evaluate_alerts(db, w, d)
     pruned = prune_old(db)
     if pruned:
-        log.info("pruned %d rows older than %d days", pruned, RETENTION_DAYS)
-    log.info("%s e-Rate Jual=%s stamp=%s %s", CURRENCY, d["erate_jual"],
-             d["source_updated_at"], "(new)" if inserted else "(unchanged)")
-    evaluate_alerts(db, d)
+        log.info("pruned %d rows (older than %d days or no longer watched)", pruned, RETENTION_DAYS)
     if HEALTHCHECK_URL:
         try:
             httpx.get(HEALTHCHECK_URL, timeout=10)
@@ -283,19 +424,29 @@ def cycle(db):
 def main():
     """CLI entry point; see the module docstring for flags."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    args = set(sys.argv[1:])
+    argv = sys.argv[1:]
+    args = set(argv)
     if "--dry" in args:
-        print(parse_page(fetch_html()))
+        rows = parse_rows(fetch_html())
+        i = argv.index("--dry") + 1
+        only = argv[i].upper() if i < len(argv) and not argv[i].startswith("--") else None
+        for code, d in rows.items():
+            if only is None or code == only:
+                print(code, d)
         return
     if "--test-telegram" in args:
-        print("sent" if telegram("matsu test message") else "FAILED (check token/chat id)")
+        print("sent" if telegram("\U0001F514 matsu test message") else "FAILED (check token/chat id)")
         return
     db = open_db()
+    seeded = seed_watches(db, parse_watchlist(WATCHLIST))
+    if seeded:
+        log.info("seeded %d watches from WATCHLIST", seeded)
     if "--once" in args:
         cycle(db)
         return
-    telegram(f"matsu started. Watching {CURRENCY} e-Rate Jual, band {band_text(*get_targets(db))}, "
-             f"every {POLL_SECONDS // 60} min.")
+    bands = "\n".join(f"{flag_emoji(w['currency'])} {w['currency']}  {band_text(w['target_min'], w['target_max'])}"
+                      for w in get_watches(db))
+    telegram(f"\U0001F440 <b>matsu started</b>, checking every {POLL_SECONDS // 60} min\n{bands or 'Nothing watched yet.'}")
     while True:
         cycle(db)
         time.sleep(POLL_SECONDS)
