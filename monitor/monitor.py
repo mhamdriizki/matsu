@@ -48,6 +48,7 @@ class ParseError(Exception):
 # ---------- scraping ----------
 
 def to_num(s):
+    """Parse an Indonesian-format number ("17.845,00" -> 17845.0); None for an empty cell."""
     s = s.strip().replace("\xa0", "")
     if not s:
         return None
@@ -55,6 +56,7 @@ def to_num(s):
 
 
 def fetch_html():
+    """GET the BCA kurs page and return its HTML. Raises on HTTP errors."""
     r = httpx.get(
         URL,
         headers={"User-Agent": USER_AGENT, "Accept-Language": "id,en;q=0.8"},
@@ -66,6 +68,7 @@ def fetch_html():
 
 
 def parse_updated(html):
+    """Return BCA's "Terakhir diperbarui pada ..." stamp as a WIB ISO string, or None if absent."""
     m = re.search(
         r"Terakhir diperbarui pada\s+(\d{1,2})\s+(\w+)\s+(\d{4})\s+(\d{1,2})[.:](\d{2})\s*WIB",
         html,
@@ -117,6 +120,7 @@ CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY, value TEXT);
 
 
 def open_db():
+    """Open (creating if needed) the SQLite DB at DB_PATH and ensure the schema exists."""
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     db = sqlite3.connect(DB_PATH)
     db.executescript(SCHEMA)
@@ -124,11 +128,13 @@ def open_db():
 
 
 def get_state(db, key, default=None):
+    """Read a value from the key/value `state` table."""
     row = db.execute("SELECT value FROM state WHERE key=?", (key,)).fetchone()
     return row[0] if row else default
 
 
 def set_state(db, key, value):
+    """Upsert a value into the `state` table (stored as text)."""
     db.execute("INSERT INTO state(key,value) VALUES(?,?) "
                "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
     db.commit()
@@ -159,6 +165,7 @@ def store_if_new(db, d):
 # ---------- alerts ----------
 
 def telegram(text):
+    """Send `text` to the configured chat. Returns True on success; logs instead if unconfigured."""
     if not (TG_TOKEN and TG_CHAT):
         log.warning("Telegram not configured; would send: %s", text)
         return False
@@ -178,11 +185,13 @@ def telegram(text):
 
 
 def band_text():
+    """Human-readable target band, e.g. "0 to 113"."""
     lo = f"{TARGET_MIN:g}" if TARGET_MIN > 0 else "0"
     return f"{lo} to {TARGET_MAX:g}"
 
 
 def evaluate_alerts(db, d):
+    """Send an alert on entering the band, setting a new low inside it, or leaving it; silent otherwise."""
     jual = d["erate_jual"]
     in_band = TARGET_MIN <= jual <= TARGET_MAX
     was_in = get_state(db, "in_band", "0") == "1"
@@ -208,6 +217,7 @@ def evaluate_alerts(db, d):
 # ---------- main cycle ----------
 
 def cycle(db):
+    """One poll: fetch, parse, store, alert; tracks consecutive failures and pings the healthcheck."""
     fails = int(get_state(db, "consecutive_failures", "0"))
     try:
         html = fetch_html()
@@ -246,6 +256,7 @@ def cycle(db):
 
 
 def main():
+    """CLI entry point; see the module docstring for flags."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     args = set(sys.argv[1:])
     if "--dry" in args:
