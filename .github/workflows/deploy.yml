@@ -1,9 +1,8 @@
-# .github/workflows/deploy.yml  (Matsu repo, default branch: master)
 name: Deploy
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
