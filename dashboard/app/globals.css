@@ -1,0 +1,35 @@
+:root {
+  --bg: #eef1f5; --ink: #16213a; --muted: #5d6882; --line: #cfd6e2;
+  --accent: #1f4fd8; --band: rgba(34, 160, 120, .16); --ok: #137a57; --warn: #b4580a;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0f1626; --ink: #e8ecf5; --muted: #93a0bd; --line: #26324d;
+          --accent: #7ea2ff; --band: rgba(60, 200, 150, .16); --ok: #4fd1a1; --warn: #f0a050; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 720px; margin: 0 auto; padding: 28px 16px 56px; }
+h1, h2 { margin: 0; font-weight: 600; }
+h2 { font-size: 1rem; margin: 32px 0 8px; }
+.rate { font-size: clamp(4rem, 18vw, 7rem); line-height: 1; letter-spacing: -.03em;
+  font-variant-numeric: tabular-nums; font-weight: 700; margin: 4px 0 8px; }
+.meta { color: var(--muted); margin: 0; font-size: .9rem; }
+.verdict { margin: 0 0 4px; font-size: 1.1rem; font-weight: 600; }
+.verdict.in { color: var(--ok); } .verdict.out { color: var(--ink); }
+.warn { color: var(--warn); margin: 0; font-size: .9rem; }
+.empty { color: var(--muted); }
+.chart { width: 100%; height: auto; margin-top: 20px; }
+.chart .band { fill: var(--band); }
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart .line { stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
+.chart .dot { fill: var(--accent); }
+.chart .tick, .chart .bandlabel { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 20px 0 0;
+  border-top: 1px solid var(--line); padding-top: 14px; }
+.stats dt { color: var(--muted); font-size: .8rem; }
+.stats dd { margin: 0; font-size: 1.25rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: .9rem; }
+th, td { text-align: left; padding: 6px 8px 6px 0; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 500; }
+@media (max-width: 520px) { .stats { grid-template-columns: repeat(2, 1fr); } }

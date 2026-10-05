@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": { "title": "Kurs Watch Architecture", "output": "kurs-watch-architecture.html", "quality_profile": "showcase" },
+  "components": [
+    { "id": "bca", "type": "external", "label": "BCA Kurs Page", "sublabel": "bca.co.id/id/informasi/kurs", "pos": [40, 230], "size": [150, 64] },
+    { "id": "monitor", "type": "backend", "label": "Monitor", "sublabel": "Python monitor.py", "pos": [290, 230], "size": [140, 64], "tag": "poll every POLL_MINUTES" },
+    { "id": "db", "type": "database", "label": "SQLite", "sublabel": "/data/kurs.db", "pos": [540, 230], "size": [130, 64], "tag": "rates + state" },
+    { "id": "dash", "type": "frontend", "label": "Dashboard", "sublabel": "Next.js :3000", "pos": [790, 230], "size": [130, 64] },
+    { "id": "user", "type": "external", "label": "User Browser", "sublabel": "SSH tunnel / proxy", "pos": [1030, 230], "size": [130, 64] },
+    { "id": "tg", "type": "cloud", "label": "Telegram Bot API", "sublabel": "alerts", "pos": [290, 400], "size": [140, 64] },
+    { "id": "hc", "type": "cloud", "label": "Healthcheck URL", "sublabel": "optional dead-man switch", "pos": [290, 60], "size": [140, 64] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Docker Compose (VPS)", "wraps": ["monitor", "db", "dash"] }
+  ],
+  "connections": [
+    { "id": "scrape", "from": "monitor", "to": "bca", "label": "HTTP GET + parse" },
+    { "id": "write", "from": "monitor", "to": "db", "label": "write", "variant": "emphasis" },
+    { "id": "read", "from": "dash", "to": "db", "label": "read-only" },
+    { "id": "serve", "from": "user", "to": "dash", "label": "HTTP" },
+    { "id": "alert", "from": "monitor", "to": "tg", "label": "sendMessage", "labelDy": 24, "variant": "dashed", "fromSide": "bottom", "toSide": "top" },
+    { "id": "ping", "from": "monitor", "to": "hc", "label": "ping", "labelAt": [360, 150], "variant": "dashed", "fromSide": "top", "toSide": "bottom" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Monitor", "items": ["Scrapes e-Rate Jual for one currency", "Stores a row only when BCA stamp changes", "Band-based Telegram alerts"] },
+    { "dot": "emerald", "title": "Dashboard", "items": ["Server-rendered, force-dynamic", "Opens SQLite read-only", "Bound to 127.0.0.1, no login"] }
+  ]
+}
