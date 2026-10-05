@@ -11,7 +11,7 @@ const sans = Zen_Kaku_Gothic_New({
 });
 
 export const metadata: Metadata = {
-  title: "Kurs Watch",
+  title: "Matsu",
   description: "BCA e-Rate watcher",
 };
 
