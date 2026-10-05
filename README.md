@@ -1,11 +1,12 @@
 # matsu 待つ
 
-Watches BCA's **e-Rate Jual** for one currency (default JPY), keeps history in SQLite,
-alerts via Telegram, and shows a Next.js dashboard.
+Watches BCA's **e-Rate Jual** for the currencies you choose (JPY, SGD, USD, ...), keeps 10 days of
+history in SQLite, alerts via Telegram when a rate enters its target band, and shows a Next.js
+dashboard with one tab per currency.
 
 ```
-BCA page --> monitor (Python) --> SQLite /data/kurs.db <-- dashboard (Next.js 16, read-only)
-                  |--> Telegram alerts
+BCA page --> monitor (Python) --> SQLite /data/kurs.db <-- dashboard (Next.js 16)
+                  |--> Telegram alerts                    (reads; writes the watchlist)
                   '--> optional healthcheck ping
 ```
 Interactive diagram: `docs/matsu-architecture.html`.
@@ -14,52 +15,73 @@ Interactive diagram: `docs/matsu-architecture.html`.
 
 1. Telegram: message @BotFather, `/newbot`, copy the token. Send any message to your bot, then open
    `https://api.telegram.org/bot<TOKEN>/getUpdates` and copy `chat.id`.
-2. `cp .env.example .env` and fill in `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
+2. `cp .env.example .env` and fill in `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`. Set `WATCHLIST`
+   (see below) for the currencies and bands you start with.
 3. **Check the scraper works from this VPS before anything else:**
    `docker compose run --rm monitor python monitor.py --dry`
-   It should print the JPY numbers. If it errors, BCA may block your VPS IP or the page layout
-   differs from what the parser expects (the raw page is saved to `data/last_page.html`).
+   It prints every currency BCA lists (`--dry SGD` for one). If it errors, BCA may block your VPS IP or the
+   page layout differs from what the parser expects (the raw page is saved to `data/last_page.html`).
 4. `docker compose run --rm monitor python monitor.py --test-telegram`
 5. `docker compose up -d --build`
 6. Dashboard binds to `127.0.0.1:3000`. Use `ssh -L 3000:localhost:3000 you@vps` or put it behind
    your reverse proxy with auth. It has no login of its own.
 
+**Upgrading from the single-currency version:** the schema changed and there is no migration. Stop the stack,
+move or delete the old `data/kurs.db`, drop `CURRENCY` / `TARGET_MIN` / `TARGET_MAX` from `.env`, add
+`WATCHLIST`, then start again.
+
+## Watchlist
+Each watched currency has its own target band (`min <= e-Rate Jual <= max`, min 0 = no floor), stored in the
+DB. Manage it from the dashboard:
+- **+ tab**: pick any currency BCA lists, set min and max, start watching.
+- **Edit target**: change a currency's band. The monitor reads it on every poll (up to `POLL_MINUTES`),
+  and saving resets that currency's alert state so the next poll re-alerts if the rate is inside the new band.
+- **Stop watching**: removes the currency **and deletes all of its stored readings**.
+
+`WATCHLIST=JPY:110:113,SGD:13720:13900` in `.env` only **seeds** the list, once, the first time the monitor
+runs on an empty database. After that the dashboard owns the list, so a currency you removed is not re-added
+on restart and changing `WATCHLIST` has no effect. Rates differ a lot in scale (JPY about 113, SGD about
+14,000), so set each band in that currency's own units.
+
 ## Dashboard
 Next.js 16 + React 19, Tailwind v4, shadcn/ui, Recharts. Needs Node >= 22 (better-sqlite3 13).
 
-- Hero rate with verdict, change since last reading, and a target meter (current vs period low/high vs target).
-- Rate history chart with the target band shaded; range switch via `?range=24h|3d|7d|10d` (default 10d).
-- Stats, monitor health (last OK, failed polls, last error), last 20 readings, light/dark mode.
-- **Edit target** button sets the min/max band. It is saved in the DB (`state` keys `target_min`/`target_max`) and the monitor reads it on every poll, so alerts follow the dashboard within one poll interval (up to `POLL_MINUTES`). Saving also resets the monitor's in-band state, so the next poll re-alerts if the rate is inside the new band.
-- Reads the DB read-only, except for saving the target. Shows an empty state until the monitor has stored a reading.
-- The container runs as root so it can write the target into the file the monitor created. Anyone who can reach the dashboard can change your target; keep it on localhost or behind auth.
+- Tabs: one per watched currency showing its code, current rate and a status dot (green in target, orange
+  above, blue below the floor). `?c=SGD` opens a tab directly.
+- Per tab: hero rate with verdict and change since last reading, target meter, history chart with the target
+  band shaded, range switch `?range=24h|3d|7d|10d` (default 10d), stats, last 20 readings.
+- Monitor health (last OK, failed polls, last error), light/dark mode.
+- Reads the DB read-only, except for add / edit / stop watching. Shows "Waiting for the monitor" until the
+  monitor has created the database.
+- The container runs as root so it can write to the file the monitor created. Anyone who can reach the
+  dashboard can change your targets; keep it on localhost or behind auth.
 - The Docker build downloads Google Fonts, so it needs network access.
 
 Local dev (no Docker): `cd dashboard && npm install && DB_PATH=../data/kurs.db npm run dev`
 
 ### Sample data
 To see the charts before real history exists:
-`DB_PATH=./data/kurs.db python3 scripts/seed_sample.py` (about 60 days of fake rates).
+`DB_PATH=./data/kurs.db python3 scripts/seed_sample.py` (about 60 days of fake JPY, SGD and USD rates).
 **Delete `data/kurs.db` afterwards** so real monitoring starts clean.
 
 ## Alert rules
-The band comes from the dashboard's saved target; `TARGET_MIN` / `TARGET_MAX` in `.env` are only the default until you first save one.
-
-- Alert once when the rate enters `TARGET_MIN..TARGET_MAX`, again on each new low while inside,
-  and once when it leaves. No repeated pings while it sits still.
-- 3 failed polls in a row triggers a "scraper failing" message; recovery triggers another.
+Evaluated per currency, with its own state; every message starts with the currency code.
+- Alert once when the rate enters the band, again on each new low while inside, and once when it leaves.
+  No repeated pings while it sits still.
+- 3 failed polls in a row triggers a "scraper failing" message; recovery triggers another. A watched currency
+  missing from the page is only a warning, unless none of the watched currencies are found.
 - Optional `HEALTHCHECK_URL` is pinged after each good poll, so you also hear about a dead container.
 
 ## Data retention
-The monitor keeps **10 days** of readings (`RETENTION_DAYS`, default 10). After each successful poll it
-deletes rows older than that, but always keeps the newest row so the dashboard still has a current
-reading. Deleted rows are gone for good. The dashboard's longest range is 10d; if you raise
-`RETENTION_DAYS`, also raise the ranges in `dashboard/lib/db.ts`.
+The monitor keeps **10 days** of readings per currency (`RETENTION_DAYS`, default 10). After each successful
+poll it deletes older rows, but always keeps the newest row of each watched currency so the dashboard still
+has a current reading. Rows of currencies that are no longer watched are deleted. Deleted rows are gone for
+good. The dashboard's longest range is 10d; if you raise `RETENTION_DAYS`, also raise the ranges in
+`dashboard/lib/db.ts`.
 
 ## Tests
-`docker compose run --rm -v ./monitor:/app monitor python test_targets.py` checks that a dashboard-saved target overrides the env defaults and drives alerts. `test_prune.py` (same command) checks the 10-day retention.
-
-Parser and alert logic were exercised offline against synthetic HTML. The live BCA page was fetched
-successfully from a local machine (JPY row parsed); run step 3 on your VPS to check it from there.
-Known quirk: `source_updated_at` is currently `None` against the live page (the "Terakhir diperbarui"
-regex does not match), so de-duplication falls back to comparing the rate value.
+Plain-assert scripts, each prints `ok`:
+`docker compose run --rm -v ./monitor:/app monitor python test_targets.py` (also `test_prune.py`,
+`test_watchlist.py`). They cover per-currency alerts, retention, WATCHLIST seeding and page parsing.
+Known quirk: `source_updated_at` is `None` against the live page (the "Terakhir diperbarui" regex does not
+match), so de-duplication compares the rate value instead.
