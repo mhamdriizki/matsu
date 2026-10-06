@@ -60,7 +60,8 @@ The `-v ./monitor:/app` mount is needed because the image only copies `monitor.p
 - **shadcn `add`**: generated components may import a bogus `cn` package. Replace it with `import { cn } from "@/lib/utils"`
   and `npm rm cn`. `-o` (overwrite) still prompts. Style is `base-nova` (Base UI: `render=` prop, `onValueChange` gets `unknown`).
 - Needs Node >= 22 (better-sqlite3 13). `next.config.js` marks it a `serverExternalPackages` entry and uses standalone output.
-- `next/font/google` (Zen Kaku Gothic New) downloads fonts at build time, so the Docker build needs network access.
+- `next/font/google` (Nunito) downloads fonts at build time, so the Docker build needs network access.
+- **Branding**: logo assets live in `dashboard/public/` (`logo.png` full, `logo-mark.png` mascot only) and `dashboard/app/icon.png`, `apple-icon.png`. The header uses the mark plus live "Matsu" text, because the wordmark in `logo.png` is dark navy on a transparent background and disappears in dark mode. The Dockerfile must copy `public/` into the standalone runner. Palette tokens (`--good` green, `--warn`/`--gold` amber, `--info` blue) and the `--text-xs`/`--text-sm` scale are in `app/globals.css`.
 - **Rate scale differs per currency** (JPY ~113, SGD ~14,000, USD ~18,000): `lib/format.ts` has `dp` (decimals), `fmt`, and
   `padded` (chart/meter padding). Do not hard-code JPY-sized padding.
 - Indonesian number format on the page: `to_num("17.845,00") -> 17845.0`. Times are stored in UTC and shown in WIB.

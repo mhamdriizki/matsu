@@ -53,7 +53,7 @@ export function CurrencyPanel({ watch, range, flag }: { watch: Watch; range: Ran
             <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
               <Flag src={flag} />Rp per 1 {code}, what you pay in myBCA
             </p>
-            <p className="my-1 text-6xl leading-none font-bold tracking-tighter sm:text-7xl">{fmt(cur.jual, d)}</p>
+            <p className="my-1 text-5xl leading-none font-extrabold tracking-tight sm:text-6xl">{fmt(cur.jual, d)}</p>
             <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
               <Badge className={cn(inBand ? "bg-good/15 text-good" : "bg-warn/15 text-warn")}>
                 {inBand ? "In target" : gap > 0 ? "Above target" : "Below floor"}
@@ -123,7 +123,7 @@ export function CurrencyPanel({ watch, range, flag }: { watch: Watch; range: Ran
             ].map(([k, v]) => (
               <div key={k} className="px-4 first:pl-0">
                 <dt className="text-sm text-muted-foreground">{k}</dt>
-                <dd className="text-2xl font-semibold">{v}</dd>
+                <dd className="text-2xl font-bold">{v}</dd>
               </div>
             ))}
           </dl>

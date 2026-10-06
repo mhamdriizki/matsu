@@ -17,6 +17,7 @@ WORKDIR /app
 ENV NODE_ENV=production HOSTNAME=0.0.0.0 PORT=3000
 COPY --from=build --chown=node:node /app/.next/standalone ./
 COPY --from=build --chown=node:node /app/.next/static ./.next/static
+COPY --from=build --chown=node:node /app/public ./public
 # Runs as root on purpose: the dashboard writes the target into the monitor's SQLite file,
 # which the monitor (root) created; a non-root user could not write it on a Linux host.
 EXPOSE 3000

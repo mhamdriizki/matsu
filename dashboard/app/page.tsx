@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AddCurrencyForm } from "@/components/add-currency-form";
@@ -13,9 +14,11 @@ export const dynamic = "force-dynamic";
 /** Wordmark, source chip and theme toggle. */
 function Header() {
   return (
-    <header className="mb-8 flex items-center justify-between">
-      <div className="flex items-baseline gap-3">
-        <span className="text-lg font-bold tracking-tight">Matsu</span>
+    <header className="mb-8 flex items-center justify-between border-b-2 border-gold/60 pb-4">
+      <div className="flex items-center gap-3">
+        <Image src="/logo-mark.png" alt="" width={48} height={48} unoptimized className="size-12" />
+        <span className="text-3xl leading-none font-extrabold tracking-tight">Matsu</span>
+        <span className="hidden text-sm text-muted-foreground sm:inline" lang="ja">待つ</span>
         <Badge variant="secondary">BCA e-Rate</Badge>
       </div>
       <ThemeToggle />
