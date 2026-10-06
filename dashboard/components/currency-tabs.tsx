@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 
 export type TabItem = { code: string; flag?: string; rate: string | null; status: "in" | "above" | "below" | "none" };
 
-const DOT = { in: "bg-good", above: "bg-warn", below: "bg-primary", none: "bg-muted-foreground/40" } as const;
+const DOT = { in: "bg-good", above: "bg-warn", below: "bg-info", none: "bg-muted-foreground/40" } as const;
 
 type Props = {
   value: string;                      // initial tab: a currency code, or "add"
